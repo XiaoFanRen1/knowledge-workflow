@@ -3,7 +3,7 @@
 This candidate is under release verification. A passing local test is not an assertion
 that an independent user has installed or exercised the product.
 
-The public suite currently contains 107 tests covering source/config binding, capture
+The public suite currently contains 114 tests covering source/config binding, capture
 idempotence and conflict recovery, immutable evidence, scope filtering, model lifecycle,
 maintenance queue ownership, PDF handling, project integration, Hook analysis and recovery.
 Real stdio MCP tests exercise the registered tool contract and original-body reads.
@@ -22,6 +22,8 @@ The delay exists only in the test fixture, not in production runtime options.
 
 Performance evidence is kept separate:
 
+Current measured results and negative samples are summarized in [performance verification](performance.md).
+
 - Query comparisons must use the same generation, model files, thread settings and
   machine. Report cold time to the target body, warm distributions, semantic/degraded
   counts, starts and combined resource peaks. A lower lexical-fallback latency does
@@ -39,5 +41,26 @@ measurements derived from them must state that their raw corpus is private. Publ
 synthetic tests can be reproduced independently; Windows Server CI is not a Windows 11
 desktop or independent receiver test.
 
-Final gates still require a frozen release tree, fresh installation and update/rollback/
-uninstall checks, installed native-client use and the independent receiver protocol.
+Frozen RC3 installation and RC4 update/rollback/uninstall were exercised on Windows 11
+with a separate Codex configuration home. Sixteen retained knowledge/index/model files
+matched their original hashes; capture/job/feedback SQLite logical records were unchanged.
+The real CLI-registered MCP read the same original evidence after update and rollback.
+Uninstall removed the owned program and registrations. The remaining data restored into
+an independent directory with eight snapshot files, two generations and one feedback-bound
+body verified. Model files remain a separately supplied dependency.
+
+The final candidate adds an uninstall precheck for user-added files at the program root.
+Without it, cleanup removed owned program files before the final directory removal failed.
+The regression test proves that the new check stops before deleting any program file;
+the normal cleanup test proves that knowledge still remains outside the removed program.
+
+A final local regression exposed a transient Windows sharing failure while reading
+`current.json` during publication. JSON state reads and atomic JSON replacement now
+allow up to 310 ms total backoff; permanent permission failures still raise, an exhausted
+replacement retains the old pointer, and malformed JSON remains an error. A concurrent
+reader/writer test verifies complete generations. Captured document bodies do not use
+this internal replacement retry: their explicit retry rechecks the expected content hash.
+
+These are isolated installation and actual stdio tests. Current desktop-plugin invocation
+and the independent Windows receiver protocol remain separate acceptance gates. A release
+candidate does not carry the stable-release claim until those gates are satisfied.

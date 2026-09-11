@@ -3,13 +3,52 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from knowledge_workflow.cleanup import active_processes, transaction_inventory
+from knowledge_workflow.cleanup import active_processes, transaction_inventory, finish_uninstall
 from knowledge_workflow.distribution import sha256_file
 from knowledge_workflow.installation import tree, recover_pending, prepare
 from knowledge_workflow.util import atomic_json
 
 
 class InstallationState(unittest.TestCase):
+    def fixture_installation(self, base):
+        root, data = base / "program", base / "data"
+        runtime = root / "versions/0.1.0-test/venv"
+        runtime.mkdir(parents=True)
+        data.mkdir()
+        (data / "knowledge.md").write_text("retain synthetic knowledge", encoding="utf-8")
+        (runtime / "owned.py").write_text("owned runtime", encoding="utf-8")
+        atomic_json(runtime.parent / "preparation.json", {"state": "prepared", "runtime_files": tree(runtime)})
+        marketplace = root / "marketplace"
+        marketplace.mkdir()
+        (marketplace / "plugin.json").write_text("{}", encoding="utf-8")
+        launcher = root / "kw.cmd"
+        launcher.write_text("@echo off\n", encoding="utf-8")
+        atomic_json(root / ".knowledge-workflow-owner.json", {"schema_version": 1,
+            "product": "knowledge-workflow", "root": str(root), "data": str(data)})
+        atomic_json(root / "installation.json", {"state": "unregistered", "root": str(root), "data": str(data),
+            "marketplace_files": tree(marketplace), "launcher_sha256": sha256_file(launcher)})
+        return root, data
+
+    def test_unowned_root_content_stops_before_any_program_deletion(self):
+        with tempfile.TemporaryDirectory(prefix="kw-uninstall-test-") as temporary:
+            root, data = self.fixture_installation(Path(temporary).resolve())
+            (root / "user-note.md").write_text("preserve this file", encoding="utf-8")
+            before = tree(root)
+            with self.assertRaisesRegex(ValueError, "unowned_program_content"):
+                finish_uninstall(root)
+            self.assertEqual(tree(root), before)
+            self.assertTrue((data / "knowledge.md").exists())
+
+    def test_owned_uninstall_removes_program_and_retains_knowledge(self):
+        with tempfile.TemporaryDirectory(prefix="kw-uninstall-test-") as temporary:
+            root, data = self.fixture_installation(Path(temporary).resolve())
+            with patch("knowledge_workflow.cleanup.active_processes", return_value=[]):
+                result = finish_uninstall(root)
+            self.assertTrue(result["ok"])
+            self.assertFalse(root.exists())
+            self.assertEqual((data / "knowledge.md").read_text(), "retain synthetic knowledge")
+            self.assertTrue((data / "uninstall-report.json").is_file())
+
     def test_verified_runtime_can_retry_selftest_without_reinstallation(self):
         with tempfile.TemporaryDirectory(prefix="kw-resume-test-") as temporary:
             base = Path(temporary).resolve()

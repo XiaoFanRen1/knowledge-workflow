@@ -19,7 +19,22 @@ def canonical(value) -> str:
 
 
 def read_json(path: Path):
-    return json.loads(path.read_text(encoding="utf-8-sig"))
+    return json.loads(_sharing_retry(lambda: path.read_text(encoding="utf-8-sig")))
+
+
+def _sharing_retry(operation):
+    """Windows readers can briefly collide with rename/delete sharing checks.
+
+    Retry only access/sharing failures for at most 310 ms of backoff. A permanent
+    permission problem remains an exception; malformed JSON is never retried away.
+    """
+    for delay in (.01, .02, .04, .08, .16, None):
+        try:
+            return operation()
+        except PermissionError:
+            if os.name != "nt" or delay is None:
+                raise
+            time.sleep(delay)
 
 
 def reject_links(path: Path) -> Path:
@@ -44,7 +59,7 @@ def contained(root: Path, relative: str) -> Path:
     return target
 
 
-def atomic_bytes(path: Path, raw: bytes) -> None:
+def atomic_bytes(path: Path, raw: bytes, *, retry_sharing=False) -> None:
     reject_links(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
@@ -53,14 +68,21 @@ def atomic_bytes(path: Path, raw: bytes) -> None:
             stream.write(raw)
             stream.flush()
             os.fsync(stream.fileno())
-        reject_links(path)
-        os.replace(temporary, path)
+        def publish():
+            reject_links(path)
+            os.replace(temporary, path)
+        # Retry tool-owned state publication only. Captured/user-editable bodies
+        # keep their ordinary failure path so a later retry rechecks content hashes.
+        if retry_sharing:
+            _sharing_retry(publish)
+        else:
+            publish()
     finally:
         temporary.unlink(missing_ok=True)
 
 
 def atomic_json(path: Path, value) -> None:
-    atomic_bytes(path, (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+    atomic_bytes(path, (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8"), retry_sharing=True)
 
 
 @contextmanager

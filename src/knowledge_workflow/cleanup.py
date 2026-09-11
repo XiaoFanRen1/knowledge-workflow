@@ -129,6 +129,13 @@ def finish_uninstall(root):
     state = read_json(root / "installation.json")
     if state.get("state") != "unregistered" or str(root) != state["root"]:
         raise ValueError("uninstall_has_not_been_deactivated")
+    allowed = {"installation.json", "installation.lock", ".knowledge-workflow-owner.json",
+               "versions", "marketplace", "kw.cmd", "transactions"}
+    if any(path.name not in allowed for path in root.iterdir()):
+        raise ValueError("unowned_program_content: review added files before uninstalling")
+    owner = read_json(root / ".knowledge-workflow-owner.json")
+    if owner != {"schema_version": 1, "product": "knowledge-workflow", "root": str(root), "data": state["data"]}:
+        raise ValueError("installation_owner_mismatch")
     active = active_processes(root)
     if active:
         return {"ok": False, "state": "cleanup_deferred", "active_pids": active, "data_retained": state["data"]}
