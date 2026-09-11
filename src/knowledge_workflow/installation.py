@@ -18,13 +18,24 @@ from .util import atomic_bytes, atomic_json, canonical, contained, digest, file_
 
 
 def tree(root):
+    root = reject_links(Path(root)).resolve()
     result = {}
-    for number, path in enumerate(sorted(root.rglob("*"))):
-        reject_links(path)
-        if path.is_file():
-            result[path.relative_to(root).as_posix()] = sha256_file(path)
-        if number and number % 3000 == 0:
-            print(f"installation inventory: {number} entries", file=sys.stderr, flush=True)
+    number = 0
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                if entry.is_symlink() or entry.is_junction():
+                    raise ValueError("linked_installation_content")
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append(Path(entry.path))
+                elif entry.is_file(follow_symlinks=False):
+                    path = Path(entry.path)
+                    result[path.relative_to(root).as_posix()] = sha256_file(path)
+                number += 1
+                if number % 3000 == 0:
+                    print(f"installation inventory: {number} entries", file=sys.stderr, flush=True)
     return result
 
 
@@ -47,7 +58,9 @@ def preview(bundle, root, data, codex, codex_home, *, startup=True):
     root, data = validate_roots(root, data)
     state = read_json(root / "installation.json") if (root / "installation.json").exists() else None
     if root.exists() and not state and any(root.iterdir()):
-        raise ValueError("installation_target_is_not_empty_or_owned")
+        owner = root / ".knowledge-workflow-owner.json"
+        if not owner.is_file() or read_json(owner) != {"schema_version": 1, "product": "knowledge-workflow", "root": str(root), "data": str(data)}:
+            raise ValueError("installation_target_is_not_empty_or_owned")
     if state and state["data"] != str(data):
         raise ValueError("changing_the_data_root_requires_explicit_migration")
     return {"ok": True, "mode": "preview", "release": manifest["version"], "commit": manifest["commit"],
@@ -64,6 +77,15 @@ def prepare(bundle, root, data, *, model_source=None, offline=False):
     bundle = Path(bundle).resolve()
     manifest = verify_bundle(bundle)
     root, data = validate_roots(root, data)
+    root.mkdir(parents=True, exist_ok=True)
+    owner = root / ".knowledge-workflow-owner.json"
+    identity = {"schema_version": 1, "product": "knowledge-workflow", "root": str(root), "data": str(data)}
+    if not owner.exists() and any(root.iterdir()) and not (root / "installation.json").is_file():
+        raise ValueError("installation_target_is_not_empty_or_owned")
+    if owner.exists() and read_json(owner) != identity:
+        raise ValueError("installation_owner_mismatch")
+    if not owner.exists():
+        atomic_json(owner, identity)
     version = manifest["version"]
     if not all(c.isalnum() or c in ".-" for c in version):
         raise ValueError("invalid_release_version")
@@ -73,11 +95,16 @@ def prepare(bundle, root, data, *, model_source=None, offline=False):
         if not marker.exists() or read_json(marker)["commit"] != manifest["commit"]:
             raise ValueError("release_version_collision")
         record = read_json(marker)
-        if record.get("state") != "prepared":
+        if record.get("state") not in {"runtime_ready", "prepared"}:
             raise ValueError("unfinished_runtime_preparation_requires_recovery")
         if tree(version_root / "venv") != record.get("runtime_files"):
             raise ValueError("prepared_runtime_modified")
         verify_model(Path(record["model_dir"]))
+        if record["state"] == "runtime_ready":
+            run([record["python"], "-I", "-B", "-X", "utf8", record["entry"], "self-test", "--model-dir", record["model_dir"]],
+                phase="Retry verified semantic acceptance", timeout=240)
+            record["state"] = "prepared"
+            atomic_json(marker, record)
         return record
     else:
         version_root.mkdir(parents=True)
@@ -96,11 +123,13 @@ def prepare(bundle, root, data, *, model_source=None, offline=False):
     entry = version_root / "venv/Lib/site-packages/knowledge_workflow/entry.py"
     if not entry.is_file():
         raise ValueError("installed_entry_missing")
-    run([python, "-I", "-B", "-X", "utf8", entry, "self-test", "--model-dir", model],
-        phase="Verify isolated semantic knowledge lifecycle", timeout=240)
-    record = {"state": "prepared", "version": version, "commit": manifest["commit"],
+    record = {"state": "runtime_ready", "version": version, "commit": manifest["commit"],
               "python": str(python), "entry": str(entry), "model_dir": str(model),
               "runtime_files": tree(version_root / "venv")}
+    atomic_json(marker, record)
+    run([python, "-I", "-B", "-X", "utf8", entry, "self-test", "--model-dir", model],
+        phase="Verify isolated semantic knowledge lifecycle", timeout=240)
+    record["state"] = "prepared"
     atomic_json(marker, record)
     return record
 

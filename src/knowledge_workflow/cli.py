@@ -10,6 +10,12 @@ from .storage import Store
 from .util import read_json, canonical, digest
 
 
+def exception_detail(error):
+    if isinstance(error, BaseExceptionGroup):
+        return "; ".join(exception_detail(item) for item in error.exceptions)[:8000]
+    return type(error).__name__ + ": " + str(error)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="kw")
     commands = parser.add_subparsers(dest="action", required=True)
@@ -210,7 +216,7 @@ def main(argv=None):
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result.get("ok", True) else 1
     except Exception as exc:
-        print(json.dumps({"ok": False, "error": {"code": type(exc).__name__, "message": str(exc)}}), file=sys.stderr)
+        print(json.dumps({"ok": False, "error": {"code": type(exc).__name__, "message": exception_detail(exc)}}), file=sys.stderr)
         return 1
     finally:
         leases.close()

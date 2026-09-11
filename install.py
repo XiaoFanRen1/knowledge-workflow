@@ -88,7 +88,7 @@ def main():
         if args.uninstall and state.get("state") == "removed":
             print(json.dumps({"ok": True, "state": "already_removed", "data_retained": state["data"]}))
             return 0
-        print(run([active["python"], "-I", "-B", "-X", "utf8", active["entry"], action, "--root", args.root], phase=action, timeout=180))
+        print(run([active["python"], "-I", "-B", "-X", "utf8", active["entry"], action, "--root", args.root], phase=action, timeout=900))
         if args.uninstall:
             from knowledge_workflow.cleanup import finish_uninstall
             result = finish_uninstall(args.root)

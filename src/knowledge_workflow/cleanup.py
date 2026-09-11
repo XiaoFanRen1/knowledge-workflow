@@ -164,6 +164,7 @@ def finish_uninstall(root):
     if (root / "transactions").exists():
         (root / "transactions").rmdir()
     (root / "installation.lock").unlink(missing_ok=True)
+    (root / ".knowledge-workflow-owner.json").unlink(missing_ok=True)
     (root / "installation.json").unlink()
     root.rmdir()
     result = {"ok": True, "state": "program_removed", "data_retained": state["data"],

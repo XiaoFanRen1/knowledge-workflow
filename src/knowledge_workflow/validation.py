@@ -59,14 +59,20 @@ async def exercise(model_dir):
                     tick = time.perf_counter()
                     answer = packet(await client.call_tool("search", {"query": "什么时候允许清除传感器缓存里的测量数据？", "mode": "semantic"}))
                     assert answer["ok"] and answer["hits"], answer
+                    first_degraded = answer["stages"]["semantic"].get("reason") == "semantic_initializing"
+                    if first_degraded:
+                        # A request can exhaust its own budget while the same initialization continues.
+                        answer = packet(await client.call_tool("search", {"query": "什么时候允许清除传感器缓存里的测量数据？", "mode": "semantic"}))
                     if answer["stages"]["semantic"]["status"] != "used":
                         raise AssertionError(answer)
                     evidence = packet(await client.call_tool("read_evidence", {"evidence_id": answer["hits"][0]["evidence_id"]}))
                     assert "收到复位确认消息之后" in evidence["body"], evidence
                     timings.append({"seconds_to_body": time.perf_counter() - tick,
-                                    "cold": answer["semantic_cold_start"], "result_state": answer["result_state"]})
+                                    "cold": answer["semantic_cold_start"], "first_response_initializing": first_degraded,
+                                    "result_state": answer["result_state"]})
                 report["queries"] = timings
                 report["status"] = packet(await client.call_tool("status", {}))
+                assert report["status"]["worker"]["starts"] == 1, report["status"]
                 repeated = packet(await client.call_tool("maintain_knowledge", {"operation_id": "synthetic-maintenance"}))
                 assert repeated["job_id"] == job_id and repeated["duplicate"], repeated
         report["ok"] = True
