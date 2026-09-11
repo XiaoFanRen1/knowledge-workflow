@@ -1,0 +1,18 @@
+{
+  "name": "knowledge-workflow",
+  "version": "0.1.0-rc.1",
+  "description": "Engineering workflow with private local knowledge capture and retrieval.",
+  "author": {
+    "name": "Knowledge Workflow contributors"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Knowledge Workflow",
+    "shortDescription": "Use Knowledge Workflow in Codex.",
+    "longDescription": "Evidence-based engineering, generic project boundaries, and a private knowledge lifecycle. Install the local runtime before using knowledge tools.",
+    "developerName": "Knowledge Workflow contributors",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": "Help me use Knowledge Workflow."
+  }
+}

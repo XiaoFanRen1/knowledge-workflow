@@ -1,0 +1,20 @@
+{
+  "name": "knowledge-workflow",
+  "interface": {
+    "displayName": "Knowledge Workflow"
+  },
+  "plugins": [
+    {
+      "name": "knowledge-workflow",
+      "source": {
+        "source": "local",
+        "path": "./plugins/knowledge-workflow"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
