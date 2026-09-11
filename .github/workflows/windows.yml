@@ -21,22 +21,27 @@ jobs:
         shell: pwsh
         run: |
           python --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-ComputerInfo -Property WindowsProductName,WindowsVersion,OsBuildNumber
       - name: Prepare exact dependency artifacts
         shell: pwsh
         run: |
           python -m pip install -r requirements/build.in
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/prepare_wheelhouse.py --wheelhouse wheelhouse
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/verify_wheelhouse.py --wheelhouse wheelhouse
       - name: Install the frozen runtime
         shell: pwsh
         run: |
           python -m pip install --no-index --find-links wheelhouse --require-hashes -r requirements/windows-cp314.lock.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m pip check
       - name: Verify public source and isolated behavior
         shell: pwsh
         run: |
           python -I -B -X utf8 tools/audit_public.py --history
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -I -B -X utf8 tests/run.py
       - name: Install the pinned public model
         shell: pwsh
@@ -45,8 +50,9 @@ jobs:
         shell: pwsh
         run: |
           python -I -B -X utf8 tools/semantic_smoke.py --model-dir models --output evidence/semantic.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -I -B -X utf8 tools/test_long_maintenance.py --model-dir models --output evidence/long-maintenance.json
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         if: always()
         with:
           name: synthetic-verification

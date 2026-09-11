@@ -3,10 +3,18 @@
 This candidate is under release verification. A passing local test is not an assertion
 that an independent user has installed or exercised the product.
 
-The public suite currently contains 100 tests covering source/config binding, capture
+The public suite currently contains 107 tests covering source/config binding, capture
 idempotence and conflict recovery, immutable evidence, scope filtering, model lifecycle,
 maintenance queue ownership, PDF handling, project integration, Hook analysis and recovery.
 Real stdio MCP tests exercise the registered tool contract and original-body reads.
+
+The first two Windows CI failures are retained as evidence. The first exposed a
+test fixture comparing a Windows short temporary path with its resolved installation
+owner path. The second was a reset PyPI connection before runtime installation.
+Downloads now retry transient transport failures up to four attempts, remove their
+partial files, and publish only bytes that match the pinned hash. Hash failures,
+untrusted TLS certificates and permanent HTTP errors remain failures. Every native
+command in a multi-command CI step is checked before proceeding.
 
 An explicit long-maintenance test delays an owned test builder for 65 seconds, closes
 the submitting MCP client, reconnects, observes completion and reads semantic evidence.

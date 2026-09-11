@@ -5,19 +5,12 @@ import json
 import subprocess
 import sys
 import tempfile
-import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from normalize_wheel import normalize
-
-
-def fetch(url, destination, expected):
-    with urllib.request.urlopen(url, timeout=60) as response, destination.open("wb") as stream:
-        while block := response.read(1024 * 1024):
-            stream.write(block)
-    if hashlib.sha256(destination.read_bytes()).hexdigest() != expected:
-        raise ValueError("artifact download hash mismatch")
+from knowledge_workflow.downloads import download_file, fetch_json
 
 
 parser = argparse.ArgumentParser()
@@ -34,14 +27,14 @@ for item in records:
     if target.exists() and hashlib.sha256(target.read_bytes()).hexdigest() == item["sha256"]:
         continue
     print("dependency: " + item["name"], flush=True)
-    with urllib.request.urlopen(f"https://pypi.org/pypi/{item['name']}/{item['version']}/json", timeout=30) as response:
-        metadata = json.load(response)
+    metadata = fetch_json(f"https://pypi.org/pypi/{item['name']}/{item['version']}/json",
+                          label=item["name"] + " metadata")
     if item["name"] == "jieba":
         source_hash = "055ca12f62674fafed09427f176506079bc135638a14e23e25be909131928db2"
         artifact = next(value for value in metadata["urls"] if value["digests"]["sha256"] == source_hash)
         with tempfile.TemporaryDirectory(prefix="kw-source-wheel-") as temporary:
             source = Path(temporary) / artifact["filename"]
-            fetch(artifact["url"], source, source_hash)
+            download_file(artifact["url"], source, source_hash, expected_bytes=artifact["size"])
             subprocess.run([sys.executable, "-I", "-m", "pip", "wheel", "--isolated", "--no-index", "--no-deps", "--no-build-isolation",
                             "--wheel-dir", str(args.wheelhouse), str(source)], check=True)
         actual = normalize(target)
@@ -49,4 +42,4 @@ for item in records:
             raise ValueError("rebuilt wheel differs from the release artifact")
     else:
         artifact = next(value for value in metadata["urls"] if value["filename"] == item["filename"] and value["digests"]["sha256"] == item["sha256"])
-        fetch(artifact["url"], target, item["sha256"])
+        download_file(artifact["url"], target, item["sha256"], expected_bytes=artifact["size"])

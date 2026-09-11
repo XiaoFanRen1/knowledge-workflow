@@ -3,7 +3,6 @@ import json
 import os
 import shutil
 import sys
-import time
 from pathlib import Path
 
 from .models import local_snapshot
@@ -60,19 +59,9 @@ def acquire_model(destination, *, existing=None, offline=False):
             elif offline:
                 raise FileNotFoundError("offline_model_file_missing: " + item["path"])
             else:
-                import urllib.request
+                from .downloads import download_file
                 url = f"https://huggingface.co/{manifest['model']}/resolve/{manifest['revision']}/{item['path']}"
-                last = time.monotonic()
-                received = 0
-                with urllib.request.urlopen(url, timeout=30) as response, temporary.open("wb") as output:
-                    while block := response.read(1024 * 1024):
-                        received += len(block)
-                        if received > item["bytes"]:
-                            raise ValueError("model_download_size_exceeded")
-                        output.write(block)
-                        if time.monotonic() - last >= 5:
-                            print(f"model: {received}/{item['bytes']} bytes", file=sys.stderr, flush=True)
-                            last = time.monotonic()
+                download_file(url, temporary, item["sha256"], expected_bytes=item["bytes"], label=item["path"])
             if temporary.stat().st_size != item["bytes"] or sha256_file(temporary) != item["sha256"]:
                 raise ValueError("model_download_hash_mismatch")
             os.replace(temporary, target)
