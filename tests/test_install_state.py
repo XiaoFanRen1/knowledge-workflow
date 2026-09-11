@@ -12,7 +12,7 @@ from knowledge_workflow.util import atomic_json
 class InstallationState(unittest.TestCase):
     def test_verified_runtime_can_retry_selftest_without_reinstallation(self):
         with tempfile.TemporaryDirectory(prefix="kw-resume-test-") as temporary:
-            base = Path(temporary)
+            base = Path(temporary).resolve()
             root, data = base / "program", base / "data"
             version = root / "versions/0.1.0-test.1"
             (version / "venv").mkdir(parents=True)
