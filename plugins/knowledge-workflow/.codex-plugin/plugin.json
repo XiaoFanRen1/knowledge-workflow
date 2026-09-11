@@ -1,6 +1,6 @@
 {
   "name": "knowledge-workflow",
-  "version": "0.1.0-rc.5",
+  "version": "0.1.0-rc.6",
   "description": "Engineering workflow with private local knowledge capture and retrieval.",
   "author": {
     "name": "Knowledge Workflow contributors"

@@ -28,6 +28,11 @@ Only the nine files in the model manifest are copied. No private knowledge is co
 the model directory. A download failure does not silently reduce a full installation to
 lexical-only retrieval.
 
+The preview reports the pinned model name/revision, total size, file count and current
+acquisition route (download, verified local copy or verified reuse), the new library's
+source directory, bundled dependency count and the plugin/MCP registration names.
+An incomplete model download remains resumable; present files are verified again before use.
+
 ## Maintenance runner and project Hook
 
 Windows MCP clients may kill their complete child process tree on disconnect. An independent
@@ -90,6 +95,14 @@ The immediately preceding verified version is retained for rollback.
 `--rollback` uses a completed previous installation. `--recover-pending` handles an interrupted
 installation transaction. Neither makes incompatible data readable by an old program; restore
 the corresponding verified snapshot when a data-format migration requires it.
+
+If a self-test fails after `runtime_ready` was recorded, rerun the same reviewed bundle:
+the installer verifies and reuses the inactive environment before retrying that self-test.
+`--recover-pending` applies to an activation transaction, not an incomplete dependency
+installation. A failure while the marker still says `preparing` requires review of the
+reported inactive version directory before removing that failed environment and retrying.
+Keep the data directory and the current active installation. The installer deliberately
+does not adopt or overwrite unreviewed partial files.
 
 Uninstall removes owned registrations, startup and inactive program files. It retains knowledge,
 feedback, model files and snapshots. Modified files and active versions are reported for review

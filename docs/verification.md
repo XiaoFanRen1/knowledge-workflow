@@ -3,7 +3,7 @@
 This candidate is under release verification. A passing local test is not an assertion
 that an independent user has installed or exercised the product.
 
-The public suite currently contains 114 tests covering source/config binding, capture
+The public suite currently contains 117 tests covering source/config binding, capture
 idempotence and conflict recovery, immutable evidence, scope filtering, model lifecycle,
 maintenance queue ownership, PDF handling, project integration, Hook analysis and recovery.
 Real stdio MCP tests exercise the registered tool contract and original-body reads.

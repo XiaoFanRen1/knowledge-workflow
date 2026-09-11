@@ -53,7 +53,7 @@ def start_selected_runners(prepared, registry_path):
                 "runner-registry", "--registry", registry_path], phase="Start selected maintenance runtime", timeout=30)
 
 
-def preview(bundle, root, data, codex, codex_home, *, startup=True):
+def preview(bundle, root, data, codex, codex_home, *, startup=True, model_source=None, offline=False):
     manifest = verify_bundle(bundle)
     root, data = validate_roots(root, data)
     state = read_json(root / "installation.json") if (root / "installation.json").exists() else None
@@ -63,12 +63,33 @@ def preview(bundle, root, data, codex, codex_home, *, startup=True):
             raise ValueError("installation_target_is_not_empty_or_owned")
     if state and state["data"] != str(data):
         raise ValueError("changing_the_data_root_requires_explicit_migration")
+    from .distribution import model_manifest
+    model = model_manifest()
+    model_directory = data / "models" / model["revision"]
+    present_files = sum((model_directory / item["path"]).is_file() for item in model["files"])
+    if present_files == len(model["files"]):
+        verify_model(model_directory)
+        acquisition = "reuse_verified_files"
+    else:
+        acquisition = "copy_verified_local_files" if model_source else "offline_files_required" if offline else "download_pinned_public_files"
+    bindings = read_json(data / "registry.json").get("libraries", {}) if (data / "registry.json").is_file() else {}
     return {"ok": True, "mode": "preview", "release": manifest["version"], "commit": manifest["commit"],
         "program_root": str(root), "data_root": str(data), "codex_home": str(codex_home),
         "codex_executable": str(codex), "previous_version": state.get("version") if state else None,
         "actions": ["prepare an isolated runtime", "verify model files", "test synthetic semantic retrieval",
                     "register the owned local plugin and MCP", "start the independent local maintenance runner"],
         "user_logon_startup": startup, "data_retained_on_uninstall": True,
+        "knowledge": {"default_config": str(data / "library/knowledge.json"),
+            "new_library_sources": [str(data / "library/notes")] if not bindings else [],
+            "registered_libraries": [{"name": item["name"], "config": item["config"]} for item in bindings.values()]},
+        "model": {"name": model["model"], "revision": model["revision"], "files": len(model["files"]),
+            "files_present": present_files,
+            "bytes": sum(item["bytes"] for item in model["files"]), "destination": str(model_directory),
+            "acquisition": acquisition, "local_source": str(model_source) if model_source else None,
+            "download_origin": "https://huggingface.co" if acquisition == "download_pinned_public_files" else None},
+        "dependencies": {"bundled_wheels": sum(name.startswith("wheels/") for name in manifest["files"]), "runtime_downloads": False},
+        "registrations": {"marketplace": "knowledge-workflow", "plugin": "knowledge-workflow@knowledge-workflow",
+            "mcp_names": [item["name"] for item in bindings.values()] or ["kw-<new-stable-library-id>"]},
         "model_settings_changed": False, "global_agents_replaced": False}
 
 

@@ -95,7 +95,8 @@ def main():
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0 if result["ok"] else 1
         return 0
-    proposed = preview(bundle, args.root, args.data, codex, args.codex_home, startup=not args.no_startup)
+    proposed = preview(bundle, args.root, args.data, codex, args.codex_home, startup=not args.no_startup,
+                       model_source=args.model_source, offline=args.offline)
     print(json.dumps(proposed, ensure_ascii=False, indent=2), flush=True)
     if not args.apply:
         return 0
