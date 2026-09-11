@@ -54,6 +54,7 @@ class Codex:
         return digest(canonical(config))
 
     def register(self, marketplace_root, python, entry, libraries):
+        self.home.mkdir(parents=True, exist_ok=True)
         self.call("plugin", "marketplace", "add", str(marketplace_root), "--json")
         self.call("plugin", "add", PLUGIN, "--json")
         for item in libraries:

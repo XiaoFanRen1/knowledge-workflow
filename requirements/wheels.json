@@ -237,8 +237,8 @@
       "name": "jieba",
       "version": "0.42.1",
       "filename": "jieba-0.42.1-py3-none-any.whl",
-      "sha256": "809badf060569f06715c671610f7e6dfa99b473998542ae2635c777878e2109e",
-      "bytes": 19504650,
+      "sha256": "cfa02af86ce241b07ac7c0b442472b1a59007a883fed45c6f091db7b655b6c1c",
+      "bytes": 19235980,
       "license_expression": null,
       "license_metadata": "MIT",
       "license_files": []

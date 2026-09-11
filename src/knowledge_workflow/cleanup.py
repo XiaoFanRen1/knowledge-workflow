@@ -65,6 +65,64 @@ def remove_verified_tree(path, root, expected):
     shutil.rmtree(path)
 
 
+def transaction_inventory(root, *, retain=None):
+    from .installation import tree
+    directory = root / "transactions"
+    results = []
+    if not directory.exists():
+        return results
+    for tx in sorted(directory.iterdir()):
+        reject_links(tx)
+        if retain and tx.resolve() == retain.resolve():
+            continue
+        receipt = read_json(tx / "receipt.json")
+        if receipt.get("phase") not in {"installed", "recovered", "rolled_back"}:
+            raise ValueError("unfinished_transaction_requires_review")
+        expected = receipt.get("owned_files")
+        if expected is None:
+            raise ValueError("transaction_inventory_not_recorded")
+        actual = tree(tx)
+        without_receipt = {k: v for k, v in actual.items() if k != "receipt.json"}
+        if without_receipt != expected:
+            raise ValueError("transaction_files_modified")
+        results.append((tx, actual, receipt))
+    return results
+
+
+def prune(root):
+    """Keep current and one rollback version; defer versions with active processes."""
+    from .installation import tree
+    root = reject_links(Path(root)).resolve()
+    state = read_json(root / "installation.json")
+    if state.get("state") != "installed" or (root / "pending-installation.json").exists():
+        raise ValueError("installation_not_ready_for_pruning")
+    keep = {state["version"]}
+    if state.get("previous"):
+        keep.add(state["previous"]["version"])
+    removed, deferred = [], []
+    for directory in sorted((root / "versions").iterdir()):
+        if directory.name in keep:
+            continue
+        marker = read_json(directory / "preparation.json")
+        if active_processes(directory):
+            deferred.append(directory.name)
+            continue
+        if marker.get("state") != "prepared" or tree(directory / "venv") != marker["runtime_files"]:
+            raise ValueError("obsolete_runtime_modified")
+        remove_verified_tree(directory / "venv", root, marker["runtime_files"])
+        (directory / "preparation.json").unlink()
+        directory.rmdir()
+        removed.append(directory.name)
+    retain = Path(state["rollback_material"]) if state.get("previous") and state.get("rollback_material") else None
+    history = Path(state["data"]) / "installation-history"
+    history.mkdir(parents=True, exist_ok=True)
+    for tx, expected, receipt in transaction_inventory(root, retain=retain):
+        atomic_json(history / (tx.name + ".json"), {"phase": receipt["phase"],
+            "version": receipt["prepared"]["version"], "commit": receipt["prepared"]["commit"]})
+        remove_verified_tree(tx, root, expected)
+    return {"ok": True, "removed_versions": removed, "deferred_busy_versions": deferred}
+
+
 def finish_uninstall(root):
     from .installation import tree
     root = reject_links(Path(root)).resolve()
@@ -76,6 +134,7 @@ def finish_uninstall(root):
         return {"ok": False, "state": "cleanup_deferred", "active_pids": active, "data_retained": state["data"]}
     if tree(root / "marketplace") != state["marketplace_files"] or sha256_file(root / "kw.cmd") != state["launcher_sha256"]:
         raise ValueError("installed_program_files_modified")
+    transactions = transaction_inventory(root)
     owned = []
     for directory in sorted((root / "versions").iterdir()):
         reject_links(directory)
@@ -96,9 +155,18 @@ def finish_uninstall(root):
     (root / "versions").rmdir()
     remove_verified_tree(root / "marketplace", root, state["marketplace_files"])
     (root / "kw.cmd").unlink()
-    state["state"] = "removed"
-    atomic_json(root / "installation.json", state)
+    history = Path(state["data"]) / "installation-history"
+    history.mkdir(parents=True, exist_ok=True)
+    for tx, expected, receipt in transactions:
+        atomic_json(history / (tx.name + ".json"), {"phase": receipt["phase"],
+            "version": receipt["prepared"]["version"], "commit": receipt["prepared"]["commit"]})
+        remove_verified_tree(tx, root, expected)
+    if (root / "transactions").exists():
+        (root / "transactions").rmdir()
+    (root / "installation.lock").unlink(missing_ok=True)
+    (root / "installation.json").unlink()
+    root.rmdir()
     result = {"ok": True, "state": "program_removed", "data_retained": state["data"],
-              "transaction_records": str(root / "transactions")}
+              "transaction_records": str(history)}
     atomic_json(Path(state["data"]) / "uninstall-report.json", result)
     return result

@@ -4,8 +4,6 @@ import os
 import shutil
 import sys
 import time
-import urllib.request
-from importlib.resources import files
 from pathlib import Path
 
 from .models import local_snapshot
@@ -22,10 +20,11 @@ def sha256_file(path):
 
 
 def model_manifest():
+    from importlib.resources import files
     return json.loads(files("knowledge_workflow").joinpath("assets/model.json").read_text(encoding="utf-8"))
 
 
-def verify_model(directory):
+def verify_model(directory, *, strict_inventory=True):
     directory = reject_links(directory).resolve()
     manifest = model_manifest()
     for item in manifest["files"]:
@@ -33,7 +32,7 @@ def verify_model(directory):
         if not path.is_file() or path.stat().st_size != item["bytes"] or sha256_file(path) != item["sha256"]:
             raise ValueError("model_hash_mismatch: " + item["path"])
     allowed = {item["path"] for item in manifest["files"]}
-    if any(p.relative_to(directory).as_posix() not in allowed for p in directory.rglob("*") if p.is_file()):
+    if strict_inventory and any(p.relative_to(directory).as_posix() not in allowed for p in directory.rglob("*") if p.is_file()):
         raise ValueError("unreviewed_model_file")
     return {"ok": True, "model": manifest["model"], "revision": manifest["revision"], "files": len(allowed)}
 
@@ -61,6 +60,7 @@ def acquire_model(destination, *, existing=None, offline=False):
             elif offline:
                 raise FileNotFoundError("offline_model_file_missing: " + item["path"])
             else:
+                import urllib.request
                 url = f"https://huggingface.co/{manifest['model']}/resolve/{manifest['revision']}/{item['path']}"
                 last = time.monotonic()
                 received = 0

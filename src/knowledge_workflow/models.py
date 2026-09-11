@@ -38,10 +38,19 @@ class LocalBackend:
         self.profile = profile()
         self.tokenizer = None
         self.model = None
+        self.validated_snapshot = None
+
+    def snapshot(self):
+        if self.validated_snapshot is None:
+            from .distribution import verify_model
+            path = local_snapshot(self.model_dir)
+            verify_model(path, strict_inventory=False)
+            self.validated_snapshot = path
+        return self.validated_snapshot
 
     def get_tokenizer(self):
         if self.tokenizer is None:
-            snapshot = local_snapshot(self.model_dir)
+            snapshot = self.snapshot()
             from transformers import AutoTokenizer
             self.tokenizer = AutoTokenizer.from_pretrained(str(snapshot),
                 local_files_only=True, trust_remote_code=False)
@@ -49,12 +58,12 @@ class LocalBackend:
 
     def load(self):
         if self.model is None:
-            snapshot = local_snapshot(self.model_dir)
+            snapshot = self.snapshot()
             import torch
             from sentence_transformers import SentenceTransformer
             torch.set_num_threads(self.cpu_threads)
             self.model = SentenceTransformer(str(snapshot),
-                local_files_only=True, trust_remote_code=False, device="cpu")
+                local_files_only=True, trust_remote_code=False, device="cpu", model_kwargs={"use_safetensors": True})
             self.model.max_seq_length = self.profile["max_tokens"]
             self.tokenizer = self.model.tokenizer
         return self.model

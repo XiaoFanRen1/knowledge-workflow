@@ -157,7 +157,7 @@ def supervise(config, job_id):
             row, payload = _row(store, job_id)
             observed = status(config, job_id)
             if observed["state"] == "published":
-                payload["generation"] = read_json(store.current)["generation"]
+                payload["generation"] = observed["generation"]
                 _save(store, job_id, "published", payload)
             elif row["state"] not in TERMINAL:
                 payload["exit_code"] = child.returncode
@@ -178,7 +178,7 @@ def execute_build(config, job_id):
     store = Store(config)
     row, payload = _row(store, job_id)
 
-    def publication(store, generation, previous):
+    def publication(store, generation, previous, unchanged=False):
         with file_lock(store.cache / "jobs.lock"):
             row, current = _row(store, job_id)
             if row["state"] not in {"starting", "running"} or current["cancel_requested"]:
@@ -187,8 +187,12 @@ def execute_build(config, job_id):
                 raise TimeoutError("maintenance_deadline_exceeded")
             current["candidate_generation"] = generation.name
             _save(store, job_id, "running", current)
-            store.publish(generation, expected_previous=previous, job_id=job_id)
-            current.update(generation=generation.name, result={k: v for k, v in generation.manifest.items() if k != "sources"})
+            if not unchanged:
+                store.publish(generation, expected_previous=previous, job_id=job_id)
+            result = {k: v for k, v in generation.manifest.items() if k != "sources"}
+            if unchanged:
+                result.update(state="unchanged", cache_reuse={"encoded": 0, "restored": 0, "history_opened": 0})
+            current.update(generation=generation.name, result=result)
             _save(store, job_id, "published", current)
 
     try:

@@ -4,6 +4,10 @@ Knowledge Workflow's original code and project-neutral adaptations are MIT licen
 The package does not distribute a private knowledge corpus, vendor SDK, model-provider
 credentials, or an author's machine configuration.
 
+The `licenses/` directory includes 101 license/notice texts covering all 68 locked
+runtime dependencies and the model license. `licenses/sources.json` records their
+origin and hashes. The original wheels also retain their embedded third-party notices.
+
 Runtime dependency artifacts are identified by exact filename, version and SHA-256 in
 `requirements/wheels.json`. Each dependency retains its own license; the root MIT license
 does not relicense dependencies or model weights.

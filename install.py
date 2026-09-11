@@ -59,6 +59,7 @@ def main():
     mode.add_argument("--dry-run", action="store_true")
     mode.add_argument("--recover-pending", action="store_true")
     mode.add_argument("--uninstall", action="store_true")
+    mode.add_argument("--rollback", action="store_true")
     args = parser.parse_args()
     if os.name != "nt" or sys.implementation.name != "cpython" or sys.version_info[:2] != (3, 14):
         raise ValueError("v1 requires Windows x64 and standard CPython 3.14")
@@ -76,11 +77,14 @@ def main():
     from knowledge_workflow.installation import preview, prepare
     from knowledge_workflow.command_runner import run
     codex = args.codex or discover_codex()
-    if args.recover_pending or args.uninstall:
+    if args.recover_pending or args.uninstall or args.rollback:
+        if args.uninstall and not args.root.exists():
+            print(json.dumps({"ok": True, "state": "already_removed", "data_policy": "retained"}))
+            return 0
         state_file = args.root / ("pending-installation.json" if args.recover_pending else "installation.json")
         state = json.loads(state_file.read_text(encoding="utf-8"))
         active = state["prepared"] if args.recover_pending else state
-        action = "recover-install" if args.recover_pending else "deactivate-install"
+        action = "recover-install" if args.recover_pending else "rollback-install" if args.rollback else "deactivate-install"
         if args.uninstall and state.get("state") == "removed":
             print(json.dumps({"ok": True, "state": "already_removed", "data_retained": state["data"]}))
             return 0

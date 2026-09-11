@@ -6,7 +6,6 @@ from contextlib import ExitStack
 from pathlib import Path
 
 from .config import KnowledgeConfig, initialize
-from .service import KnowledgeService
 from .storage import Store
 from .util import read_json, canonical, digest
 
@@ -23,6 +22,12 @@ def main(argv=None):
     project.add_argument("--template", choices=("generic", "python", "embedded"), default="generic")
     project.add_argument("--knowledge-ref", default="project")
     project.add_argument("--dry-run", action="store_true")
+    doctor = commands.add_parser("doctor")
+    doctor.add_argument("--root", required=True, type=Path)
+    doctor.add_argument("--verify-model", action="store_true")
+    for name in ("project-guard", "project-hook-config"):
+        guard = commands.add_parser(name)
+        guard.add_argument("--root", required=True, type=Path)
     backup = commands.add_parser("backup")
     backup.add_argument("--config", required=True, type=Path)
     backup.add_argument("--destination", required=True, type=Path)
@@ -43,11 +48,22 @@ def main(argv=None):
     lookup.add_argument("--registry", required=True, type=Path)
     lookup.add_argument("--project", required=True, type=Path)
     lookup.add_argument("--knowledge-ref", default="project")
+    register = commands.add_parser("register-library")
+    register.add_argument("--root", required=True, type=Path)
+    register.add_argument("--config", required=True, type=Path)
+    register.add_argument("--knowledge-ref", required=True)
+    legacy = commands.add_parser("import-generation")
+    for name in ("config", "database", "manifest", "source-map"):
+        legacy.add_argument("--" + name, required=True, type=Path)
+    legacy.add_argument("--publish", action="store_true")
+    legacy_feedback = commands.add_parser("import-feedback")
+    legacy_feedback.add_argument("--config", required=True, type=Path)
+    legacy_feedback.add_argument("--database", required=True, type=Path)
     activation = commands.add_parser("activate-install")
     for name in ("bundle", "root", "data", "codex", "codex-home", "prepared"):
         activation.add_argument("--" + name, required=True, type=Path)
     activation.add_argument("--no-startup", action="store_true")
-    for name in ("recover-install", "deactivate-install"):
+    for name in ("recover-install", "deactivate-install", "rollback-install", "prune-install"):
         item = commands.add_parser(name)
         item.add_argument("--root", required=True, type=Path)
     for name in ("status", "search", "read", "capture", "feedback", "maintain", "maintenance-status", "cancel", "mcp", "worker", "job-supervise", "job-build", "build", "runner-start", "runner-stop", "runner-serve"):
@@ -69,12 +85,37 @@ def main(argv=None):
             sub.add_argument("--timeout-seconds", type=float, default=600)
         if name in {"maintain", "build"}:
             sub.add_argument("--lexical-only", action="store_true")
+        if name == "build":
+            sub.add_argument("--force", action="store_true")
         if name in {"maintenance-status", "cancel", "job-supervise", "job-build"}:
             sub.add_argument("--job-id", required=True)
     args = parser.parse_args(argv)
     leases = ExitStack()
     try:
-        if args.action == "self-test":
+        if args.action == "doctor":
+            from .doctor import inspect
+            result = inspect(args.root, verify_model_hashes=args.verify_model)
+        elif args.action == "project-guard":
+            from .project_guard import hook
+            try:
+                raw = sys.stdin.read(1024 * 1024 + 1)
+                if len(raw) > 1024 * 1024:
+                    raise ValueError("hook input budget exceeded")
+                result = hook(args.root, json.loads(raw))
+            except Exception as exc:
+                result = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                    "permissionDecisionReason": "Project guard could not classify this request: " + type(exc).__name__}}
+        elif args.action == "project-hook-config":
+            from .project_guard import configuration
+            result = configuration(args.root)
+        elif args.action == "import-generation":
+            from .legacy import import_generation
+            result = import_generation(KnowledgeConfig.load(args.config), args.database, args.manifest,
+                                       read_json(args.source_map), publish=args.publish)
+        elif args.action == "import-feedback":
+            from .legacy import import_feedback
+            result = import_feedback(KnowledgeConfig.load(args.config), args.database)
+        elif args.action == "self-test":
             import asyncio
             from .validation import exercise
             result = asyncio.run(exercise(args.model_dir))
@@ -87,13 +128,20 @@ def main(argv=None):
         elif args.action == "resolve":
             from .registry import resolve
             result = resolve(args.registry, args.project, args.knowledge_ref)
+        elif args.action == "register-library":
+            from .installation import register_library
+            result = register_library(args.root, args.config, args.knowledge_ref)
         elif args.action == "activate-install":
             from .installation import activate
             result = activate(args.bundle, args.root, args.data, args.codex, args.codex_home,
                               read_json(args.prepared), startup=not args.no_startup)
-        elif args.action in {"recover-install", "deactivate-install"}:
-            from .installation import recover_pending, deactivate
-            result = recover_pending(args.root) if args.action == "recover-install" else deactivate(args.root)
+        elif args.action == "prune-install":
+            from .cleanup import prune
+            result = prune(args.root)
+        elif args.action in {"recover-install", "deactivate-install", "rollback-install"}:
+            from .installation import recover_pending, deactivate, rollback
+            operation = {"recover-install": recover_pending, "deactivate-install": deactivate, "rollback-install": rollback}[args.action]
+            result = operation(args.root)
         elif args.action == "backup":
             from .recovery import backup
             result = backup(KnowledgeConfig.load(args.config), args.destination)
@@ -109,8 +157,9 @@ def main(argv=None):
             result = {"ok": True, "kb_id": config.kb_id, "config": str(config.config_path), "index_state": "empty"}
         else:
             config = KnowledgeConfig.load(args.config)
-            from .leases import runtime_lease
-            leases.enter_context(runtime_lease(config, args.action))
+            if args.action in {"mcp", "worker", "runner-serve", "job-supervise", "job-build"}:
+                from .leases import runtime_lease
+                leases.enter_context(runtime_lease(config, args.action))
             if args.binding_hash and digest(canonical(config.json())) != args.binding_hash:
                 raise ValueError("knowledge_binding_changed")
             if args.action == "mcp":
@@ -141,8 +190,9 @@ def main(argv=None):
                     return 0
             elif args.action == "build":
                 from .build import build
-                result = {"ok": True, **build(config, lexical_only=args.lexical_only)}
+                result = {"ok": True, **build(config, lexical_only=args.lexical_only, force=args.force)}
             else:
+                from .service import KnowledgeService
                 service = KnowledgeService(config)
                 try:
                     if args.action == "status":

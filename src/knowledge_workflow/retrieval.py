@@ -8,6 +8,20 @@ import re
 from .content import tokenize
 
 
+def identifiers(query):
+    quoted = re.findall(r"`([^`]{1,128})`", query)
+    tokens = re.findall(r"(?<![A-Za-z0-9_])[A-Za-z0-9_]+(?![A-Za-z0-9_])", query)
+    selected = [word for word in tokens if len(word) >= 2 and
+                (word.isupper() or any(c.isdigit() for c in word) or "_" in word)]
+    return list(dict.fromkeys(word.casefold() for word in [*quoted, *selected]))[:32]
+
+
+def body_identifier_coverage(query_ids, body):
+    body = body.casefold()
+    return sum(bool(re.search(r"(?<![a-z0-9_])" + re.escape(identifier) + r"(?![a-z0-9_])", body))
+               for identifier in query_ids)
+
+
 def scope_sql(workspace=None, chip=None, include_history=False):
     conditions, args = [], []
     if not include_history:

@@ -5,12 +5,41 @@ import json
 import sqlite3
 import sys
 import time
+from importlib.machinery import PathFinder
+from pathlib import Path
 from contextlib import closing
 
-from .content import chunk_documents, collect_documents
+from .content import chunk_documents, collect_documents, inventory
 from .models import LocalBackend, embedding_fingerprint, fingerprint, profile
 from .storage import SCHEMA, Store
 from .util import atomic_json, canonical, digest, file_lock, read_json
+
+
+def pipeline_signature():
+    directory = Path(__file__).parent
+    values = {name: digest((directory / name).read_bytes()) for name in ("build.py", "content.py", "models.py")}
+    parser = PathFinder.find_spec("pypdf")
+    if parser is None or not parser.origin:
+        raise RuntimeError("PDF parser metadata unavailable")
+    # The pinned parser exposes its version in this tiny file. Hashing it avoids
+    # loading distribution/email/archive machinery for a no-change maintenance.
+    values["pypdf_version_source"] = digest(Path(parser.origin).with_name("_version.py").read_bytes())
+    return digest(canonical(values))
+
+
+def unchanged(config, selected, lexical_only):
+    from .distribution import sha256_file
+    manifest = selected.manifest
+    if (manifest.get("pipeline_sha256") != pipeline_signature()
+            or manifest.get("source_config_sha256") != digest(canonical(config.json()))
+            or manifest.get("model_fingerprint") != fingerprint(profile())):
+        return False
+    if manifest["chunk_count"] and manifest["semantic_ready"] == lexical_only:
+        return False
+    paths = inventory(config)
+    if {name for name, _ in paths} != set(manifest["sources"]):
+        return False
+    return all(sha256_file(path) == manifest["sources"][name]["sha256"] for name, path in paths)
 
 
 def recover_vectors(store, cache, required, model_key, dimension):
@@ -23,7 +52,7 @@ def recover_vectors(store, cache, required, model_key, dimension):
             if dim == dimension and size == dimension * 4:
                 missing.discard(key)
     metrics = {"required_keys": len(required), "missing_before": len(missing),
-               "restored": 0, "history_opened": 0, "invalid_history_vectors": 0, "encoded": 0}
+               "restored": 0, "history_opened": 0, "invalid_history_vectors": 0, "encoded": 0, "legacy_rows": 0}
     paths = sorted(store.generations.glob("*/manifest.json"), reverse=True) if missing else []
     for path in paths:
         if not missing:
@@ -35,6 +64,23 @@ def recover_vectors(store, cache, required, model_key, dimension):
                 continue
             with generation.connect() as previous:
                 metrics["history_opened"] += 1
+                keyed = previous.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='chunk_vec_keys'").fetchone()
+                if not keyed or not previous.execute("SELECT 1 FROM chunk_vec_keys LIMIT 1").fetchone():
+                    for text, dim, blob in previous.execute("SELECT c.embedding_text,v.dim,v.blob FROM chunks c JOIN chunk_vec v ON c.id=v.id"):
+                        metrics["legacy_rows"] += 1
+                        key = digest(model_key + "\n" + text)
+                        if key not in missing:
+                            continue
+                        if dim != dimension or not isinstance(blob, bytes) or len(blob) != dimension * 4:
+                            metrics["invalid_history_vectors"] += 1
+                            continue
+                        cache.execute("INSERT OR REPLACE INTO vectors VALUES(?,?,?)", (key, dim, blob))
+                        missing.remove(key)
+                        metrics["restored"] += 1
+                        if not missing:
+                            break
+                    cache.commit()
+                    continue
                 keys = sorted(missing)
                 for offset in range(0, len(keys), 400):
                     batch = keys[offset:offset + 400]
@@ -94,11 +140,17 @@ def encode_chunks(store, connection, model):
     return metrics
 
 
-def build(config, *, lexical_only=False, publication=None, job_id=None):
+def build(config, *, lexical_only=False, publication=None, job_id=None, force=False):
     started = time.perf_counter()
     store = Store(config)
     with file_lock(store.cache / "writer.lock"):
         previous = store.load()
+        if not force and unchanged(config, previous, lexical_only):
+            if publication:
+                publication(store, previous, previous.name, unchanged=True)
+            return {"state": "unchanged", "generation": previous.name,
+                    "elapsed_seconds": round(time.perf_counter() - started, 3),
+                    "cache_reuse": {"encoded": 0, "restored": 0, "history_opened": 0}}
         documents = collect_documents(config)
         if not documents and previous.manifest["source_count"]:
             raise ValueError("empty_transition_requires_review")
@@ -142,6 +194,7 @@ def build(config, *, lexical_only=False, publication=None, job_id=None):
             "embedded": len(chunks) if model else 0, "cache_reuse": metrics,
             "elapsed_seconds": round(time.perf_counter() - started, 3),
             "source_config_sha256": digest(canonical(config.json())),
+            "pipeline_sha256": pipeline_signature(), "token_bounded": model is not None,
             "source_coverage": {"empty_pdf_pages": {d.path: d.source["empty_pages"] for d in documents if d.source["empty_pages"]}}}
         atomic_json(directory / "manifest.json", manifest)
         selected = store.load(name)

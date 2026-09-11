@@ -37,6 +37,11 @@ def validate_roots(root, data):
     return root, data
 
 
+def start_selected_runners(prepared, registry_path):
+    return run([prepared["python"], "-I", "-B", "-X", "utf8", prepared["entry"],
+                "runner-registry", "--registry", registry_path], phase="Start selected maintenance runtime", timeout=30)
+
+
 def preview(bundle, root, data, codex, codex_home, *, startup=True):
     manifest = verify_bundle(bundle)
     root, data = validate_roots(root, data)
@@ -189,9 +194,7 @@ def activate(bundle, root, data, codex_executable, codex_home, prepared, *, star
                 startup_module.remove(old["startup"])
             receipt["startup"] = shortcut
             atomic_json(pending, receipt)
-            started = registry.start_runners(registry_path)
-            if not started["ok"]:
-                raise RuntimeError("maintenance_runner_activation_failed")
+            start_selected_runners(prepared, registry_path)
             relative_python = Path(prepared["python"]).relative_to(root)
             relative_entry = Path(prepared["entry"]).relative_to(root)
             launcher = (f'@echo off\r\n"%~dp0{relative_python}" -I -B -X utf8 '
@@ -203,10 +206,12 @@ def activate(bundle, root, data, codex_executable, codex_home, prepared, *, star
                 "codex_executable": str(codex.executable), "codex_home": str(codex.home), "codex_version": codex_version,
                 "registry": str(registry_path), "components": codex.components(names), "startup": shortcut,
                 "marketplace_files": tree(installed_marketplace), "launcher_sha256": digest(launcher),
-                "previous": {**old, "previous": None} if old else None, "bundle_sha256": sha256_file(bundle / "release.json")}
+                "previous": {**old, "previous": None} if old else None, "bundle_sha256": sha256_file(bundle / "release.json"),
+                "rollback_material": str(tx)}
             atomic_json(state_path, state)
             receipt["phase"] = "installed"
             receipt["installed_state_sha256"] = sha256_file(state_path)
+            receipt["owned_files"] = tree(tx)
             atomic_json(tx / "receipt.json", receipt)
             pending.unlink()
             return {"ok": True, "version": state["version"], "config": str(config.config_path),
@@ -223,7 +228,7 @@ def activate(bundle, root, data, codex_executable, codex_home, prepared, *, star
 
 def recover_pending(root):
     """Restore reviewed own components only; refuse intervening user changes."""
-    from . import registry, startup
+    from . import registry, runner, startup
     root = reject_links(Path(root)).resolve()
     pending = root / "pending-installation.json"
     with file_lock(root / "installation.lock"):
@@ -256,6 +261,9 @@ def recover_pending(root):
                 raise ValueError("unowned_marketplace_in_transaction")
         if expected["plugin"] not in (None, receipt["before_components"]["plugin"], {"enabled": True}):
             raise ValueError("unowned_plugin_configuration_in_transaction")
+        for item in receipt["libraries"]:
+            if not runner.stop(KnowledgeConfig.load(item["config"]))["ok"]:
+                raise RuntimeError("active_maintenance_prevents_recovery")
         codex.remove(names)
         if receipt.get("startup"):
             startup.remove(receipt["startup"])
@@ -276,10 +284,11 @@ def recover_pending(root):
                 atomic_bytes(target, (tx / "startup-old.lnk").read_bytes())
             atomic_bytes(root / "kw.cmd", (tx / "launcher-old.cmd").read_bytes())
             atomic_json(root / "installation.json", old)
-            registry.start_runners(receipt["registry"])
+            start_selected_runners(old, receipt["registry"])
         if codex.unowned_hash(names) != receipt["unowned_hash"]:
             raise RuntimeError("unowned_configuration_requires_review")
         receipt["phase"] = "recovered"
+        receipt["owned_files"] = {k: v for k, v in tree(tx).items() if k != "receipt.json"}
         atomic_json(tx / "receipt.json", receipt)
         pending.unlink()
     return {"ok": True, "state": "recovered", "data_retained": True,
@@ -312,3 +321,119 @@ def deactivate(root):
         atomic_json(root / "installation.json", state)
         return {"ok": True, "state": "unregistered", "data_retained": state["data"],
                 "program_cleanup": "external_bootstrap_after_process_exit"}
+
+
+def rollback(root):
+    """Switch to the retained verified runtime and plugin; do not migrate knowledge data."""
+    from . import registry, runner, startup
+    root = reject_links(Path(root)).resolve()
+    with file_lock(root / "installation.lock"):
+        state = read_json(root / "installation.json")
+        old = state.get("previous")
+        if not old or (root / "pending-installation.json").exists():
+            raise ValueError("no_completed_rollback_candidate")
+        material = reject_links(Path(state["rollback_material"])).resolve()
+        if not material.is_relative_to(root / "transactions"):
+            raise ValueError("untrusted_rollback_material")
+        if tree(material / "marketplace-old") != old["marketplace_files"]:
+            raise ValueError("rollback_plugin_source_modified")
+        marker = read_json(Path(old["python"]).parents[2] / "preparation.json")
+        if tree(Path(old["python"]).parents[1]) != marker["runtime_files"]:
+            raise ValueError("rollback_runtime_modified")
+        codex = Codex(Path(state["codex_executable"]), Path(state["codex_home"]))
+        libraries = list(read_json(Path(state["registry"]))["libraries"].values())
+        names = [item["name"] for item in libraries]
+        if codex.components(names) != state["components"] or tree(root / "marketplace") != state["marketplace_files"]:
+            raise ValueError("installed_components_modified")
+        for item in libraries:
+            # An incompatible old reader cannot be made compatible by changing metadata.
+            run([old["python"], "-I", "-B", "-X", "utf8", old["entry"], "status", "--config", item["config"]],
+                phase="Check rollback data compatibility", timeout=30)
+            if not runner.stop(KnowledgeConfig.load(item["config"]))["ok"]:
+                raise RuntimeError("active_maintenance_prevents_rollback")
+        tx = contained(root, "transactions/" + uuid.uuid4().hex)
+        tx.mkdir(parents=True)
+        atomic_bytes(tx / "launcher-old.cmd", (root / "kw.cmd").read_bytes())
+        if state.get("startup"):
+            current_shortcut = Path(state["startup"]["path"])
+            if sha256_file(current_shortcut) != state["startup"]["sha256"]:
+                raise ValueError("startup_shortcut_modified")
+            atomic_bytes(tx / "startup-old.lnk", current_shortcut.read_bytes())
+        receipt = {"schema_version": 1, "transaction": str(tx), "old": state, "prepared": old,
+            "before_components": state["components"], "last_components": state["components"],
+            "phase": "rollback", "codex_executable": state["codex_executable"], "codex_home": state["codex_home"],
+            "libraries": libraries, "registry": state["registry"], "unowned_hash": codex.unowned_hash(names)}
+        pending = root / "pending-installation.json"
+        atomic_json(pending, receipt)
+        try:
+            shutil.copytree(material / "marketplace-old", tx / "marketplace-new")
+            os.replace(root / "marketplace", tx / "marketplace-old")
+            os.replace(tx / "marketplace-new", root / "marketplace")
+            codex.register(root / "marketplace", old["python"], old["entry"], libraries)
+            receipt["last_components"] = codex.components(names)
+            shortcut = None
+            if old.get("startup"):
+                shortcut = startup.install(old["python"], old["entry"], state["registry"],
+                    target=Path(old["startup"]["path"]), expected_hash=state.get("startup", {}).get("sha256") if state.get("startup") else None)
+            elif state.get("startup"):
+                startup.remove(state["startup"])
+            receipt["startup"] = shortcut
+            atomic_bytes(root / "kw.cmd", (material / "launcher-old.cmd").read_bytes())
+            restored = {**old, "components": codex.components(names), "startup": shortcut,
+                        "previous": {**state, "previous": None}, "rollback_material": str(tx)}
+            if codex.unowned_hash(names) != receipt["unowned_hash"]:
+                raise RuntimeError("unowned_codex_configuration_changed")
+            start_selected_runners(old, state["registry"])
+            atomic_json(root / "installation.json", restored)
+            receipt["phase"] = "rolled_back"
+            receipt["owned_files"] = tree(tx)
+            atomic_json(tx / "receipt.json", receipt)
+            pending.unlink()
+            return {"ok": True, "state": "rolled_back", "version": restored["version"], "data_migrated": False}
+        except BaseException:
+            receipt.update(phase="recovery_required", observed_components=codex.components(names),
+                           observed_marketplace_files=tree(root / "marketplace"))
+            atomic_json(pending, receipt)
+            raise
+
+
+def register_library(root, config_path, knowledge_ref):
+    from . import registry
+    root = reject_links(Path(root)).resolve()
+    config = KnowledgeConfig.load(config_path)
+    if config.root.is_relative_to(root) or config.cache.is_relative_to(root):
+        raise ValueError("knowledge_data_cannot_live_inside_program_root")
+    Store(config).load()
+    with file_lock(root / "installation.lock"):
+        state = read_json(root / "installation.json")
+        if state.get("state") != "installed" or (root / "pending-installation.json").exists():
+            raise ValueError("installation_not_ready")
+        registry_path = Path(state["registry"])
+        current = read_json(registry_path)
+        if knowledge_ref in current["bindings"] and current["bindings"][knowledge_ref] != config.kb_id:
+            raise ValueError("logical_binding_conflict")
+        codex = Codex(Path(state["codex_executable"]), Path(state["codex_home"]))
+        names = [item["name"] for item in current["libraries"].values()]
+        if codex.components(names) != state["components"]:
+            raise ValueError("codex_components_modified")
+        name = "kw-" + config.kb_id
+        if config.kb_id in current["libraries"]:
+            if current["libraries"][config.kb_id]["config"] != str(config.config_path):
+                raise ValueError("library_binding_conflict")
+        elif codex.components([name])["mcp"][name] is not None:
+            raise ValueError("mcp_name_collision")
+        else:
+            proposed = {"command": state["python"], "args": ["-I", "-B", "-X", "utf8", state["entry"], "mcp", "--config", str(config.config_path)]}
+            try:
+                codex.call("mcp", "add", name, "--", proposed["command"], *proposed["args"])
+                registry.register(registry_path, config, knowledge_ref)
+            except BaseException:
+                if codex.components([name])["mcp"][name] == proposed:
+                    codex.call("mcp", "remove", name)
+                raise
+            names.append(name)
+        registry.register(registry_path, config, knowledge_ref)
+        state["components"] = codex.components(names)
+        atomic_json(root / "installation.json", state)
+        start_selected_runners(state, registry_path)
+        return {"ok": True, "kb_id": config.kb_id, "mcp_name": name, "knowledge_ref": knowledge_ref}

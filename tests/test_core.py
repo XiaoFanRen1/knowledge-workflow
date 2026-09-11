@@ -132,7 +132,18 @@ class Core(unittest.TestCase):
         before = store.current.read_bytes()
         with patch("knowledge_workflow.build.collect_documents", side_effect=FileNotFoundError("missing source")):
             with self.assertRaises(FileNotFoundError):
-                build(self.f.config, lexical_only=True)
+                build(self.f.config, lexical_only=True, force=True)
+        self.assertEqual(store.current.read_bytes(), before)
+
+    def test_unchanged_maintenance_does_not_load_model_or_rewrite_pointer(self):
+        self.f.capture()
+        build(self.f.config, lexical_only=True)
+        store = Store(self.f.config)
+        before = store.current.read_bytes()
+        with patch("knowledge_workflow.build.chunk_documents", side_effect=AssertionError("unexpected rechunk")):
+            result = build(self.f.config, lexical_only=True)
+        self.assertEqual(result["state"], "unchanged")
+        self.assertEqual(result["cache_reuse"]["encoded"], 0)
         self.assertEqual(store.current.read_bytes(), before)
 
     def test_bad_generation_and_cross_library_manifest_rejected(self):

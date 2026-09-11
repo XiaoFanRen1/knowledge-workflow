@@ -4,12 +4,13 @@ from __future__ import annotations
 import base64
 import json
 import re
+import os
 import time
 import uuid
 
 from .capture import capture, validate_id
 from .models import local_snapshot
-from .retrieval import lexical
+from .retrieval import lexical, identifiers, body_identifier_coverage
 from .storage import Store
 from .util import canonical, digest
 from .worker import ModelWorker
@@ -44,15 +45,17 @@ class KnowledgeService:
 
     def search(self, query, limit=8, mode="auto", workspace=None, chip=None, include_history=False):
         started = time.perf_counter()
-        if not isinstance(query, str) or not query.strip() or len(query) > 4000:
+        if not isinstance(query, str) or not query.strip() or len(query) > 64000:
             return error_result("invalid_query")
-        if type(limit) is not int or not 1 <= limit <= 50 or mode not in {"auto", "semantic", "lexical"}:
+        if type(limit) is not int or limit < 1 or mode not in {"auto", "hybrid", "semantic", "lexical"}:
             return error_result("invalid_search_options")
+        limit = min(limit, 8)
         if type(include_history) is not bool or any(x is not None and not isinstance(x, str) for x in (workspace, chip)):
             return error_result("invalid_scope")
         ambiguous = workspace == "current"
         scope = {"workspace": None if ambiguous else workspace, "chip": chip, "include_history": include_history}
         result = {"schema_version": 2, "ok": True, "query_id": uuid.uuid4().hex, "query": query,
+            "mode": mode, "index_version": None,
             "kb_id": self.config.kb_id, "hits": [], "degraded": False, "semantic_cold_start": False,
             "scope": {**scope, "state": "explicit" if scope["workspace"] else "library_only",
                       "current_project_verified": False}}
@@ -80,26 +83,41 @@ class KnowledgeService:
             result["stages"] = {"semantic": stage, "rerank": {"status": "skipped", "reason": "not_configured"}}
             result["degraded"] = stage["status"] in {"failed", "unavailable"}
             seen = set()
+            query_ids = identifiers(query)
+            candidates = []
             with selected.connect() as db:
                 for hit in hits:
-                    row = db.execute("SELECT c.*,d.metadata_json,d.source_json FROM chunks c "
-                        "JOIN documents d ON c.path=d.path WHERE c.id=?", (hit["rowid"],)).fetchone()
+                    row = db.execute("SELECT c.*,s.body AS parent_body,d.metadata_json,d.source_json FROM chunks c "
+                        "JOIN documents d ON c.path=d.path JOIN sections s ON s.section_id=c.section_id WHERE c.id=?", (hit["rowid"],)).fetchone()
                     if row is None:
                         raise ValueError("candidate_not_in_pinned_generation")
                     if row["section_id"] in seen:
                         continue
                     seen.add(row["section_id"])
                     metadata, source = json.loads(row["metadata_json"]), json.loads(row["source_json"])
-                    result["hits"].append({"evidence_id": selected.name + ":" + row["evidence_id"],
+                    candidates.append({"evidence_id": selected.name + ":" + row["evidence_id"],
+                        "_identifier_coverage": body_identifier_coverage(query_ids, row["parent_body"][:16000]),
+                        "index_version": selected.name,
                         "path": row["path"], "heading": row["heading"], "page": row["page"],
-                        "line": row["line_start"], "section_id": row["section_id"], "snippet": row["body"][:1200],
+                        "line": row["line_start"], "section_id": row["section_id"], "snippet": row["body"][:400],
+                        "span": {"start": row["start_char"], "end": row["end_char"]}, "has_more": len(row["body"]) > 400,
+                        "family": row["family"], "kind": row["kind"], "role": metadata.get("role"), "recalled_by": None,
                         "score": hit["score"], "source_version": source,
-                        "source_state": source_state(self.config, row["path"], source),
-                        "verification": metadata.get("verification", {"evidence_level": metadata.get("evidence_level", "unspecified")}),
+                        "verification": {"status": metadata.get("status"), "maturity": metadata.get("maturity"),
+                            "workspace_ids": metadata.get("workspace_ids", []), "evidence_date": metadata.get("evidence_date"),
+                            "level": metadata.get("evidence_level", "unspecified"), "declared_source_version": metadata.get("source_version"),
+                            "current_project_verified": False, "declared": metadata.get("verification", {}),
+                            "boundary": "Metadata declares scope; it is not independent revalidation."},
                         "lifecycle": metadata.get("lifecycle", metadata.get("status", "active")),
                         "maturity": metadata.get("maturity", "unspecified"), "current_project_verified": False})
-                    if len(result["hits"]) >= limit:
+                    if len(candidates) >= (40 if query_ids else limit):
                         break
+            if query_ids:
+                candidates.sort(key=lambda item: (-item["_identifier_coverage"], -item["score"]))
+            for candidate in candidates[:limit]:
+                candidate.pop("_identifier_coverage")
+                candidate["source_state"] = source_state(self.config, candidate["path"], candidate["source_version"])
+                result["hits"].append(candidate)
             result["result_state"] = "weak" if result["hits"] and stage["status"] == "used" else "candidates" if result["hits"] else "empty"
             if ambiguous:
                 result["result_state"] = "scope_ambiguous"
@@ -139,15 +157,23 @@ class KnowledgeService:
                 following = base64.urlsafe_b64encode(canonical({"evidence_id": evidence_id,
                     "offset": offset + len(body)}).encode()).decode()
             source, metadata = json.loads(row["source_json"]), json.loads(row["metadata_json"])
+            with selected.connect() as db:
+                siblings = db.execute("SELECT s.heading,MIN(c.evidence_id) AS evidence_id FROM sections s "
+                    "JOIN chunks c ON c.section_id=s.section_id WHERE s.path=? GROUP BY s.section_id "
+                    "ORDER BY abs(s.line_start-?) LIMIT 8", (row["path"], row["parent_line"])).fetchall()
             return {"schema_version": 2, "ok": True, "kb_id": self.config.kb_id, "index_version": selected.name,
                 "evidence_id": evidence_id, "path": row["path"], "heading": row["heading"], "page": row["page"],
-                "line": row["parent_line"] + text[:offset].count("\n"), "body": body, "offset": offset,
+                "line": row["parent_line"], "body": body, "offset": offset,
+                "focus_span": {"start": row["start_char"], "end": row["end_char"]},
+                "nearby_sections": [{"heading": item["heading"], "evidence_id": selected.name + ":" + item["evidence_id"]} for item in siblings],
                 "total_chars": len(text), "next_cursor": following, "source_version": source,
                 "source_state": source_state(self.config, row["path"], source),
-                "verification": metadata.get("verification", {}), "current_project_verified": False,
+                "verification": {**metadata, "independently_verified": False}, "current_project_verified": False,
                 "boundary": "Retained source text; verification declarations are not independent validation."}
+        except FileNotFoundError as exc:
+            return error_result("evidence_version_unavailable", str(exc))
         except Exception as exc:
-            return error_result(type(exc).__name__, str(exc))
+            return error_result("invalid_evidence_request", str(exc))
 
     def record_feedback(self, event_id, query_id, outcome, reason="", evidence_id=""):
         try:
@@ -173,7 +199,9 @@ class KnowledgeService:
         return capture(self.config, **request)
 
     def status(self):
-        result = {"schema_version": 2, "ok": True, "kb_id": self.config.kb_id, "worker": self.worker.status()}
+        result = {"schema_version": 2, "ok": True, "kb_id": self.config.kb_id, "worker": self.worker.status(),
+                  "supported_contract_versions": [2], "server_pid": os.getpid(), "cache": str(self.config.cache),
+                  "knowledge_root": str(self.config.root), "feedback_queue": []}
         try:
             selected = self.store.load()
             with selected.connect() as db:
@@ -181,6 +209,11 @@ class KnowledgeService:
             result.update(index_version=selected.name, index_state=selected.manifest["index_state"],
                 source_count=selected.manifest["source_count"], chunk_count=selected.manifest["chunk_count"],
                 semantic_ready=selected.manifest["semantic_ready"])
+            result.update(coverage={key: selected.manifest.get(key, False if key == "token_bounded" else 0)
+                                    for key in ("source_count", "chunk_count", "embedded", "token_bounded")},
+                          model_profile=selected.manifest["model_profile"], model_fingerprint=selected.manifest["model_fingerprint"],
+                          source_coverage=selected.manifest.get("source_coverage", {}),
+                          degradation_reason=selected.manifest["model_error"])
             with self.store.control() as db:
                 result["feedback_count"] = db.execute("SELECT count(*) FROM feedback").fetchone()[0]
                 records = db.execute("SELECT record_id,sha256 FROM records").fetchall()

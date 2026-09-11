@@ -1,6 +1,6 @@
 """Model process bound to exactly one immutable knowledge configuration."""
 from pathlib import Path
-from .models import LocalBackend, fingerprint
+from .models import LocalBackend, fingerprint, embedding_fingerprint
 from .processes import command
 from .storage import Store
 from .worker_client import ModelWorkerClient
@@ -24,7 +24,7 @@ def serve(config):
         selected = store.load(payload["generation"])
         if selected.manifest["model_fingerprint"] != payload["fingerprint"]:
             raise ValueError("model_fingerprint_mismatch")
-        if fingerprint(model.profile) != payload["fingerprint"]:
+        if embedding_fingerprint(model.profile) != embedding_fingerprint(selected.manifest["model_profile"]):
             raise ValueError("unsupported_model_profile")
         return selected
 
