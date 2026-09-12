@@ -44,6 +44,28 @@ def discover_codex():
     return candidates[0]
 
 
+def validated_recovery_runtime(root, active):
+    """Verify the interpreter we will reuse before executing recovery code."""
+    from knowledge_workflow.installation import tree
+    from knowledge_workflow.util import reject_links
+    root = reject_links(root).resolve()
+    version = active.get("version", "")
+    if not version or not all(c.isalnum() or c in ".-" for c in version) or version in (".", ".."):
+        raise ValueError("untrusted_recovery_version")
+    directory = root / "versions" / version
+    python = directory / "venv/Scripts/python.exe"
+    entry = directory / "venv/Lib/site-packages/knowledge_workflow/entry.py"
+    if Path(active["python"]).resolve() != python or Path(active["entry"]).resolve() != entry:
+        raise ValueError("untrusted_recovery_runtime_path")
+    marker = json.loads((directory / "preparation.json").read_text(encoding="utf-8"))
+    if (marker.get("state") != "prepared" or marker.get("commit") != active.get("commit")
+            or marker.get("runtime_files") != active.get("runtime_files")):
+        raise ValueError("untrusted_recovery_runtime_record")
+    if tree(directory / "venv") != marker["runtime_files"]:
+        raise ValueError("recovery_runtime_modified")
+    return python
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bundle", type=Path, default=Path(__file__).resolve().parent)
@@ -88,7 +110,13 @@ def main():
         if args.uninstall and state.get("state") == "removed":
             print(json.dumps({"ok": True, "state": "already_removed", "data_retained": state["data"]}))
             return 0
-        print(run([active["python"], "-I", "-B", "-X", "utf8", active["entry"], action, "--root", args.root], phase=action, timeout=900))
+        if args.recover_pending:
+            interpreter = validated_recovery_runtime(args.root, active)
+            command = [interpreter, "-I", "-B", "-X", "utf8", bundle / "recover_install.py",
+                       "--bundle", bundle, "--root", args.root]
+        else:
+            command = [active["python"], "-I", "-B", "-X", "utf8", active["entry"], action, "--root", args.root]
+        print(run(command, phase=action, timeout=900))
         if args.uninstall:
             from knowledge_workflow.cleanup import finish_uninstall
             result = finish_uninstall(args.root)

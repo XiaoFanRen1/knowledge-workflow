@@ -96,6 +96,13 @@ The immediately preceding verified version is retained for rollback.
 installation transaction. Neither makes incompatible data readable by an old program; restore
 the corresponding verified snapshot when a data-format migration requires it.
 
+Use the NEW reviewed release for `--recover-pending`. It verifies the old dependency
+interpreter but executes the new recovery implementation, so an installation defect in
+the old version does not prevent repair. Recovery preserves current unrelated Codex
+settings and removes/restores only recorded owned components. A changed owned file or
+registration still requires review. Empty stdio `args = []` and omitted `args` are the
+same startup configuration; other edits remain detectable.
+
 If a self-test fails after `runtime_ready` was recorded, rerun the same reviewed bundle:
 the installer verifies and reuses the inactive environment before retrying that self-test.
 `--recover-pending` applies to an activation transaction, not an incomplete dependency

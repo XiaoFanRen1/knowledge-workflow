@@ -3,7 +3,7 @@
 This candidate is under release verification. A passing local test is not an assertion
 that an independent user has installed or exercised the product.
 
-The public suite currently contains 117 tests covering source/config binding, capture
+The public suite currently contains 126 tests covering source/config binding, capture
 idempotence and conflict recovery, immutable evidence, scope filtering, model lifecycle,
 maintenance queue ownership, PDF handling, project integration, Hook analysis and recovery.
 Real stdio MCP tests exercise the registered tool contract and original-body reads.
@@ -64,3 +64,21 @@ this internal replacement retry: their explicit retry rechecks the expected cont
 These are isolated installation and actual stdio tests. Current desktop-plugin invocation
 and the independent Windows receiver protocol remain separate acceptance gates. A release
 candidate does not carry the stable-release claim until those gates are satisfied.
+
+## RC6 activation in an existing native configuration
+
+The author's RC6 activation failed after dependency/model/semantic checks. Native
+`codex mcp add` omitted another stdio server's explicit empty `args = []`; the old
+unowned-configuration hash treated that equivalent serialization as a substantive change.
+A synthetic native CLI reproduction confirms that `mcp get` returns identical transport
+settings before and after the omission. Nonempty arguments remain unchanged.
+
+RC7 normalizes only this empty stdio argument default. HTTP or ambiguous transports,
+nonempty arguments and all other settings remain significant. Activation still rejects
+actual unrelated edits. Recovery validates owned files/registrations, preserves unrelated
+values present when recovery begins and verifies them again afterward. It neither writes
+an old whole configuration back nor replaces the old recorded fingerprint.
+
+The new release's recovery code runs with an existing verified dependency interpreter;
+it does not delegate the repair back to defective old installed code. RC6's published tag
+and assets are unchanged. Native desktop and independent receiver acceptance remain open.

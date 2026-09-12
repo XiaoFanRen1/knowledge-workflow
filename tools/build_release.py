@@ -53,7 +53,7 @@ with tempfile.TemporaryDirectory(prefix="kw-release-export-") as temporary:
     candidates = list(runtime.glob("knowledge_workflow-*.whl"))
     if len(candidates) != 1:
         raise ValueError("runtime wheel inventory mismatch")
-    for name in ("install.py", "install.cmd", "README.md", "LICENSE"):
+    for name in ("install.py", "install.cmd", "recover_install.py", "README.md", "LICENSE"):
         shutil.copyfile(exported / name, destination / name)
     if (exported / "docs").is_dir():
         shutil.copytree(exported / "docs", destination / "docs")

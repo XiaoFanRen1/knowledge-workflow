@@ -1,5 +1,6 @@
 """Register owned components through the supported Codex CLI only."""
 import os
+import copy
 import subprocess
 import re
 import tomllib
@@ -43,14 +44,24 @@ class Codex:
                 "plugin": config.get("plugins", {}).get(PLUGIN),
                 "mcp": {name: config.get("mcp_servers", {}).get(name) for name in names}}
 
-    def unowned_hash(self, names):
-        config = self.config()
+    def unowned_hash(self, names, *, version=2):
+        if version not in (1, 2):
+            raise ValueError("unsupported_configuration_fingerprint")
+        config = copy.deepcopy(self.config())
         for table, keys in (("marketplaces", [MARKETPLACE]), ("plugins", [PLUGIN]), ("mcp_servers", names)):
             value = config.get(table, {})
             for key in keys:
                 value.pop(key, None)
             if not value:
                 config.pop(table, None)
+        if version == 2:
+            # Native `codex mcp add` omits empty stdio args while rewriting its
+            # server table. The native reader resolves omitted and [] identically.
+            # Do not normalize HTTP/ambiguous transports or other default fields.
+            for server in config.get("mcp_servers", {}).values():
+                if (isinstance(server, dict) and isinstance(server.get("command"), str)
+                        and server["command"] and "url" not in server and server.get("args") == []):
+                    server.pop("args")
         return digest(canonical(config))
 
     def register(self, marketplace_root, python, entry, libraries):

@@ -11,7 +11,7 @@ parser.add_argument("--history", action="store_true")
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 allowed_roots = {"src", "tests", "tools", "docs", "plugins", "requirements", "licenses", "examples", ".agents", ".github"}
-allowed_files = {".gitignore", ".gitattributes", "AGENTS.md", "README.md", "README.en.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "pyproject.toml", "install.py", "install.cmd"}
+allowed_files = {".gitignore", ".gitattributes", "AGENTS.md", "README.md", "README.en.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "pyproject.toml", "install.py", "install.cmd", "recover_install.py"}
 forbidden_suffixes = {".sqlite", ".db", ".zip", ".whl", ".safetensors", ".bin", ".log", ".pyc"}
 patterns = [re.compile(rb"(?:ghp_|github_pat_|sk-proj-)[A-Za-z0-9_]{20,}"),
             re.compile(rb"[A-Za-z]:[/\\](?:Users[/\\][^/\\\s\"']+|WORK-[0-9]+|ObsidianVault)[/\\]", re.I)]

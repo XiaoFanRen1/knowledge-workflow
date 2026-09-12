@@ -209,7 +209,8 @@ def activate(bundle, root, data, codex_executable, codex_home, prepared, *, star
         receipt = {"schema_version": 1, "transaction": str(tx), "old": old, "prepared": prepared,
                    "before_components": before, "last_components": before, "phase": "prepared",
                    "codex_executable": str(codex.executable), "codex_home": str(codex.home),
-                   "libraries": libraries, "unowned_hash": unowned_before, "registry": str(registry_path)}
+                   "libraries": libraries, "unowned_hash": unowned_before, "unowned_hash_version": 2,
+                   "registry": str(registry_path)}
         if old and old.get("startup"):
             old_shortcut = Path(old["startup"]["path"])
             if old_shortcut.exists():
@@ -277,7 +278,7 @@ def activate(bundle, root, data, codex_executable, codex_home, prepared, *, star
 
 
 def recover_pending(root):
-    """Restore reviewed own components only; refuse intervening user changes."""
+    """Restore reviewed own components and preserve current unrelated settings."""
     from . import registry, runner, startup
     root = reject_links(Path(root)).resolve()
     pending = root / "pending-installation.json"
@@ -288,6 +289,10 @@ def recover_pending(root):
             raise ValueError("untrusted_installation_transaction")
         codex = Codex(Path(receipt["codex_executable"]), Path(receipt["codex_home"]))
         names = [item["name"] for item in receipt["libraries"]]
+        # Other settings may have legitimately changed since installation failed.
+        # Recovery does not restore them: preserve the values present now, and
+        # compare them again after undoing only this transaction's components.
+        recovery_unowned = codex.unowned_hash(names)
         actual = codex.components(names)
         expected = receipt.get("observed_components", actual)
         if actual != expected:
@@ -335,13 +340,15 @@ def recover_pending(root):
             atomic_bytes(root / "kw.cmd", (tx / "launcher-old.cmd").read_bytes())
             atomic_json(root / "installation.json", old)
             start_selected_runners(old, receipt["registry"])
-        if codex.unowned_hash(names) != receipt["unowned_hash"]:
+        if codex.unowned_hash(names) != recovery_unowned:
             raise RuntimeError("unowned_configuration_requires_review")
+        receipt["recovery_unowned_hash"] = recovery_unowned
+        receipt["recovery_unowned_hash_version"] = 2
         receipt["phase"] = "recovered"
         receipt["owned_files"] = {k: v for k, v in tree(tx).items() if k != "receipt.json"}
         atomic_json(tx / "receipt.json", receipt)
         pending.unlink()
-    return {"ok": True, "state": "recovered", "data_retained": True,
+    return {"ok": True, "state": "recovered", "data_retained": True, "current_unowned_config_preserved": True,
             "previous_version": old["version"] if old else None}
 
 
@@ -412,7 +419,8 @@ def rollback(root):
         receipt = {"schema_version": 1, "transaction": str(tx), "old": state, "prepared": old,
             "before_components": state["components"], "last_components": state["components"],
             "phase": "rollback", "codex_executable": state["codex_executable"], "codex_home": state["codex_home"],
-            "libraries": libraries, "registry": state["registry"], "unowned_hash": codex.unowned_hash(names)}
+            "libraries": libraries, "registry": state["registry"], "unowned_hash": codex.unowned_hash(names),
+            "unowned_hash_version": 2}
         pending = root / "pending-installation.json"
         atomic_json(pending, receipt)
         try:
