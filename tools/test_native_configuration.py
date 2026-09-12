@@ -25,7 +25,7 @@ for scenario in ("empty-args", "legacy-recovery", "concurrent-unowned-edit"):
         bundle, program, data, home = [base / name for name in ("bundle", "program", "data", "codex")]
         home.mkdir()
         path = home / "config.toml"
-        path.write_text('model = "synthetic-original"\n\n[mcp_servers.existing]\ncommand = "python.exe"\nargs = []\n', encoding="utf-8")
+        path.write_text('model = "synthetic-original"\n\n[mcp_servers.existing]\ncommand = "python.exe"\nargs = []\nstartup_timeout_sec = 17\ntool_timeout_sec = 61\n', encoding="utf-8")
         cli = Codex(args.codex, home)
         original = cli.unowned_hash([])
         legacy = cli.unowned_hash([], version=1)

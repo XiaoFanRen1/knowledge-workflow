@@ -101,7 +101,8 @@ interpreter but executes the new recovery implementation, so an installation def
 the old version does not prevent repair. Recovery preserves current unrelated Codex
 settings and removes/restores only recorded owned components. A changed owned file or
 registration still requires review. Empty stdio `args = []` and omitted `args` are the
-same startup configuration; other edits remain detectable.
+same startup configuration. Numerically equal integer/float MCP timeout seconds also
+compare equally; changing the value remains detectable. No timeout is increased.
 
 If a self-test fails after `runtime_ready` was recorded, rerun the same reviewed bundle:
 the installer verifies and reuses the inactive environment before retrying that self-test.

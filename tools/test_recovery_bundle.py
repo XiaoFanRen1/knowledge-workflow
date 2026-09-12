@@ -29,7 +29,7 @@ with tempfile.TemporaryDirectory(prefix="kw-frozen-recovery-") as temporary:
     root = Path(temporary).resolve()
     program, data, home = [root / name for name in ("program", "data", "codex")]
     home.mkdir()
-    (home / "config.toml").write_text('model = "synthetic-original"\n\n[mcp_servers.existing]\ncommand = "python.exe"\nargs = []\n', encoding="utf-8")
+    (home / "config.toml").write_text('model = "synthetic-original"\n\n[mcp_servers.existing]\ncommand = "python.exe"\nargs = []\nstartup_timeout_sec = 17\ntool_timeout_sec = 61\n', encoding="utf-8")
     cli = Codex(args.codex, home)
     legacy_hash = cli.unowned_hash([], version=1)
     version = program / "versions/0.0.0-legacy"

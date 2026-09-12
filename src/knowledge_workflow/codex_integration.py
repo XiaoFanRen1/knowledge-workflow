@@ -57,11 +57,19 @@ class Codex:
         if version == 2:
             # Native `codex mcp add` omits empty stdio args while rewriting its
             # server table. The native reader resolves omitted and [] identically.
-            # Do not normalize HTTP/ambiguous transports or other default fields.
+            # HTTP/ambiguous transport args and other default fields stay distinct.
             for server in config.get("mcp_servers", {}).values():
                 if (isinstance(server, dict) and isinstance(server.get("command"), str)
                         and server["command"] and "url" not in server and server.get("args") == []):
                     server.pop("args")
+                if isinstance(server, dict):
+                    # The CLI also serializes seconds as floats (17 -> 17.0).
+                    # Canonicalize only these documented numeric duration fields,
+                    # preserving their exact value and distinguishing bools/unknowns.
+                    for key in ("startup_timeout_sec", "tool_timeout_sec"):
+                        seconds = server.get(key)
+                        if type(seconds) is float and seconds.is_integer() and 0 <= seconds <= 2 ** 53:
+                            server[key] = int(seconds)
         return digest(canonical(config))
 
     def register(self, marketplace_root, python, entry, libraries):

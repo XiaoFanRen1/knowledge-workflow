@@ -3,7 +3,7 @@
 This candidate is under release verification. A passing local test is not an assertion
 that an independent user has installed or exercised the product.
 
-The public suite currently contains 126 tests covering source/config binding, capture
+The public suite currently contains 128 tests covering source/config binding, capture
 idempotence and conflict recovery, immutable evidence, scope filtering, model lifecycle,
 maintenance queue ownership, PDF handling, project integration, Hook analysis and recovery.
 Real stdio MCP tests exercise the registered tool contract and original-body reads.
@@ -70,11 +70,15 @@ candidate does not carry the stable-release claim until those gates are satisfie
 The author's RC6 activation failed after dependency/model/semantic checks. Native
 `codex mcp add` omitted another stdio server's explicit empty `args = []`; the old
 unowned-configuration hash treated that equivalent serialization as a substantive change.
+The CLI also wrote an integer startup timeout as the same floating-point seconds value;
+the old hash distinguished the numeric representations even though the values were equal.
 A synthetic native CLI reproduction confirms that `mcp get` returns identical transport
 settings before and after the omission. Nonempty arguments remain unchanged.
 
-RC7 normalizes only this empty stdio argument default. HTTP or ambiguous transports,
-nonempty arguments and all other settings remain significant. Activation still rejects
+RC7 normalizes this empty stdio argument default and exact integral representations of
+the two documented MCP timeout-in-seconds fields. It does not change timeout values.
+HTTP or ambiguous transport arguments, nonempty arguments, booleans, unknown fields and
+all other settings remain significant. Activation still rejects
 actual unrelated edits. Recovery validates owned files/registrations, preserves unrelated
 values present when recovery begins and verifies them again afterward. It neither writes
 an old whole configuration back nor replaces the old recorded fingerprint.

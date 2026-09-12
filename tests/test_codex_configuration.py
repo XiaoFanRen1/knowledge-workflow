@@ -86,6 +86,29 @@ class CodexConfiguration(unittest.TestCase):
             server.pop("args")
             self.assertNotEqual(self.codex.unowned_hash([]), before)
 
+    def test_seconds_numeric_representation_is_equivalent_but_values_are_not(self):
+        server = MemoryCodex.value["mcp_servers"]["existing"]
+        server.update(startup_timeout_sec=17, tool_timeout_sec=61)
+        before = self.codex.unowned_hash([])
+        server.update(startup_timeout_sec=17.0, tool_timeout_sec=61.0)
+        self.assertEqual(self.codex.unowned_hash([]), before)
+        server["startup_timeout_sec"] = 18.0
+        self.assertNotEqual(self.codex.unowned_hash([]), before)
+        server["startup_timeout_sec"] = 17.25
+        self.assertNotEqual(self.codex.unowned_hash([]), before)
+
+    def test_bools_and_unknown_numeric_fields_remain_distinct(self):
+        server = MemoryCodex.value["mcp_servers"]["existing"]
+        server["startup_timeout_sec"] = 1
+        before = self.codex.unowned_hash([])
+        server["startup_timeout_sec"] = True
+        self.assertNotEqual(self.codex.unowned_hash([]), before)
+        server["startup_timeout_sec"] = 1
+        server["unknown_seconds"] = 5
+        before = self.codex.unowned_hash([])
+        server["unknown_seconds"] = 5.0
+        self.assertNotEqual(self.codex.unowned_hash([]), before)
+
     def test_actual_unrelated_change_still_blocks_activation_and_recovery_preserves_it(self):
         with tempfile.TemporaryDirectory(prefix="kw-config-recovery-") as directory:
             bundle, program, data, home, prepared, manifest = self.fixture(directory)
